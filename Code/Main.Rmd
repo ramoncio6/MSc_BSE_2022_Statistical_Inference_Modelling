@@ -91,4 +91,5 @@ beta.lassocv[which(beta.lassocv!=0)]
 ```{r}
 model <- lm(Y~., data=data)
 summary(model)
+
 ```
