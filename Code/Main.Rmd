@@ -22,18 +22,18 @@ library(mvtnorm)
 ```{r}
 PATH=getwd()
 
-italy<- read_csv(file.path(PATH, "italy_income.csv"), col_names = T)
+italy <- read_csv(file.path(PATH, "italy_income.csv"), col_names = T)
 
 
 X <- italy[,-c(1,2,3,4)]
 Y <- italy[,3]
 
-data<-cbind(X,Y)
+data <- cbind(X,Y)
 
-x= model.matrix(Y~., data=data)
-y= data$Y
-n= nrow(x)
-d= ncol(x)
+x = model.matrix(Y~., data=data)
+y = data$Y
+n = nrow(x)
+d = ncol(x)
 
 ```
 
@@ -71,8 +71,8 @@ lasso.bic <- function(y,x,extended=FALSE) {
 
 ```{r}
 
-fit.lassobic=lasso.bic(y,x[,-1]) 
-beta.lassobic= fit.lassobic$coef[-1]
+fit.lassobic = lasso.bic(y,x[,-1]) 
+beta.lassobic = fit.lassobic$coef[-1]
 
 length(names(beta.lassobic[which(beta.lassobic!=0)]))
 beta.lassobic[which(beta.lassobic!=0)]
