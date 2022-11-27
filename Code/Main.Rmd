@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r}
-PATH=getwd()
+PATH = getwd()
 library(bayestestR)
 library(rstanarm)
 library(ggplot2)
@@ -19,6 +19,8 @@ library(gridExtra)
 library(mvtnorm)
 
 ```
+
+
 ```{r}
 PATH=getwd()
 
