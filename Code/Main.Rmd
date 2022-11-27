@@ -93,3 +93,18 @@ model <- lm(Y~., data=data)
 summary(model)
 ```
 
+```{r}
+model <- lm(Y~., data=data)
+summary(model)
+```
+
+```{r}
+model <- lm(Y~., data=data)
+summary(model)
+```
+
+
+```{r}
+model <- lm(Y~., data=data)
+summary(model)
+```
