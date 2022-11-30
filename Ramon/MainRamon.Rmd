@@ -1,1 +1,83 @@
+---
+title: "Bayesian Quantile Regression"
+author: "Ramón Talvi Robledo"
+output: html_document
+---
 
+```{r , include=FALSE}
+rm(list=ls())
+```
+
+## **SET-UP**
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/Users/Ramon/Documents/Estudio/BSE/Term_1/Statistical_Modelling_Inference/Part_1_David/Practice_Coding/Assignment_1")
+options(scipen=999,digits=4)
+library(boot)
+library(tidyverse)
+library(hdm)
+library(glmnet)
+library(ggplot2)
+library(tidyverse)
+library(HDCI)
+library(gridExtra)
+library(pscl)
+library(DescTools)
+library(caret)
+library(formattable)
+library(knitr)
+library(monomvn)
+library(lars)
+library(glmnet)
+library(miscTools) 
+library(rstanarm)
+
+```
+
+
+## Loading the Dataset 
+
+```{r }
+data <- read.csv(file.path('../Data/italy_income.csv'))
+#X <- data[, -which(names(data) == "Y")] 
+X <- data[,-c(1,2,3,4,16,17)]
+X <- as.matrix(cbind(rep(1,nrow(X)),X))
+y = data$Y
+data_df = data.frame(y, X)
+```
+
+
+## Bayesian Lasso
+
+
+```{r }
+fit <- stan_glm(y ~ X, 
+              data = data_df, 
+              family = gaussian, 
+              prior = laplace(location = 0, scale = NULL, autoscale = FALSE),
+              prior_aux = exponential(rate = 1, autoscale = FALSE),
+              algorithm = "sampling",
+              chains=1)
+```
+
+
+
+```{r }
+m= coef(fit)
+q= posterior_interval(fit)[1:length(m),]
+round(cbind(m, q), 2)
+```
+
+
+```{r }
+plot(fit)
+```
+
+```{r }
+th= as.matrix(fit)
+m= colMeans(th) #posterior mean
+q= t(apply(th,2,quantile,probs=c(.025,.975))) #posterior quantiles
+round(cbind(m, q), 2)
+```
