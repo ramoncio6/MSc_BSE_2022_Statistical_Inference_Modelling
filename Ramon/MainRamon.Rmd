@@ -33,7 +33,7 @@ library(lars)
 library(glmnet)
 library(miscTools) 
 library(rstanarm)
-
+library(mombf)
 ```
 
 
@@ -51,12 +51,30 @@ data_df = data.frame(y, X)
 
 ## Bayesian Lasso
 
+### Setting Ridge regularization parameter via marginal likelihood
+
+## Fitting bayesian lasso model
+
+```{r}
+gseq= seq(.1,10000,length=50)
+sel= rep(TRUE,ncol(X))
+
+m = double(length(gseq))
+for (i in 1:length(gseq)) {
+  pr= laplace
+  m[i]= nlpMarginal(sel=sel, y=y, x=xpol, priorCoef=pr)
+  m2[i]= nlpMarginal(sel=sel, y=y2, x=xpol2, priorCoef=pr)
+  m3[i]= nlpMarginal(sel=sel, y=y3, x=xpol3, priorCoef=pr)
+}
+```
+
+## Fitting bayesian lasso model
 
 ```{r }
 fit <- stan_glm(y ~ X, 
               data = data_df, 
               family = gaussian, 
-              prior = laplace(location = 0, scale = NULL, autoscale = FALSE),
+              prior = laplace(location = 0, scale = 1/0.04, autoscale = FALSE),
               prior_aux = exponential(rate = 1, autoscale = FALSE),
               algorithm = "sampling",
               chains=1)
