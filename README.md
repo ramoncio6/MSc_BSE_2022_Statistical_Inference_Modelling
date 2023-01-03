@@ -1,3 +1,3 @@
 # Statistical_Inference_&_Modelling_BSE_2022
-Final SIM project: Income Determinants 
+Final SIM project: Income Determinants in Italy from a Micro perspective.
 By Alessandro Tenderini & Ramón Talvi.
