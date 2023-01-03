@@ -1,0 +1,686 @@
+---
+title: "Bayesaian Model Averaging & Bayesian Quantile Regression"
+author: "Ramón Talvi Robledo Alessnadro Tenderini"
+output: html_document
+---
+
+```{r , include=FALSE}
+rm(list=ls())
+```
+
+## **SET-UP**
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+options(scipen=999,digits=4)
+library(boot)
+library(tidyverse)
+library(hdm)
+library(glmnet)
+library(ggplot2)
+library(tidyverse)
+library(HDCI)
+library(gridExtra)
+library(pscl)
+library(DescTools)
+library(caret)
+library(formattable)
+library(knitr)
+library(monomvn)
+library(lars)
+library(glmnet)
+library(miscTools) 
+library(rstanarm)
+library(mombf)
+library(bayestestR)
+library(rstanarm)
+library(xtable)
+```
+
+## Loading the Dataset 
+
+```{r }
+# Set seed
+set.seed(2)
+
+# Read in the data from the CSV file
+italy <- read.csv(file.path('../Data/italy_income_final.csv'))
+italy_final=italy[italy$ETA>15,]
+italy_final$W[italy_final$W == 0]=0.1
+italy_final=italy_final[italy_final$W>0,]
+italy_final=italy_final[italy_final$Y>0,]
+
+# Rename Y as income
+data <- italy_final
+names=names(data)
+names[1]="income"
+names(data)=names
+
+# Log of income and wealth
+data$income=log(data$income)
+data$W=log(data$W)
+
+# Train and test split
+train_index=sample(1:nrow(data), nrow(data)*0.7, replace = FALSE)
+data_train=data[train_index,]
+data_test=data[-train_index,]
+
+# X and y (train)
+X=data_train[,-1]
+y=data_train$income
+
+# x (train) 
+x = model.matrix(income~., data=data_train)
+
+# X_test and Y_test
+X_test=data_test[,-1]
+Y_test=data_test$income
+
+# Linear regression
+#summary(lm(income~.,data = data_train))
+```
+
+
+```{r }
+names(X) <- 
+c('Grade_HS',
+'Grade_Uni',
+'CumLaude',
+'N_jobs',
+'Prob_knj',
+'Min_salary_acc',
+'Age',
+'Head_Fam',
+'Num_Y_fam',
+'Wealth',
+'Sex_girl',
+'Foreigner',
+'Not_Citizen',
+'Educ_SC',
+'Educ_PS',
+'Educ_Bach',
+'Educ_ProfDip',
+'Educ_Mas',
+'Educ_HS',
+'Educ_PostDeg',
+'Prof_health',
+'Prof_other',
+'Prof_engin',
+'Prof_arch',
+'Prof_sci',
+'Prof_hum',
+'Prof_law',
+'Prof_econ',
+'Prof_pol_sc',
+'Type_HS_mast',
+'Type_HS_PI',
+'Type_HS_CSL',
+'Type_HS_other',
+'Type_HS_art',
+'Employed_historical',
+'No_contr_Pensions',
+'Unemployed_present',
+'Remote_work',
+'Qual_Retired',
+'Qual_employee',
+'Qual_worker',
+'Qual_entrepeneaur',
+'Qual_aut',
+'Qual_man_dir',
+'Sector_other',
+'Sector_ind',
+'Sector_public',
+'No_Y',
+'Y_20_50',
+'Y_5_20',
+'Y_200_m',
+'Y_50_200')
+
+names(X_test) <- 
+c('Grade_HS',
+'Grade_Uni',
+'CumLaude',
+'N_jobs',
+'Prob_knj',
+'Min_salary_acc',
+'Age',
+'Head_Fam',
+'Num_Y_fam',
+'Wealth',
+'Sex_girl',
+'Foreigner',
+'Not_Citizen',
+'Educ_SC',
+'Educ_PS',
+'Educ_Bach',
+'Educ_ProfDip',
+'Educ_Mas',
+'Educ_HS',
+'Educ_PostDeg',
+'Prof_health',
+'Prof_other',
+'Prof_engin',
+'Prof_arch',
+'Prof_sci',
+'Prof_hum',
+'Prof_law',
+'Prof_econ',
+'Prof_pol_sc',
+'Type_HS_mast',
+'Type_HS_PI',
+'Type_HS_CSL',
+'Type_HS_other',
+'Type_HS_art',
+'Employed_historical',
+'No_contr_Pensions',
+'Unemployed_present',
+'Remote_work',
+'Qual_Retired',
+'Qual_employee',
+'Qual_worker',
+'Qual_entrepeneaur',
+'Qual_aut',
+'Qual_man_dir',
+'Sector_other',
+'Sector_ind',
+'Sector_public',
+'No_Y',
+'Y_20_50',
+'Y_5_20',
+'Y_200_m',
+'Y_50_200')
+
+names <- c('Grade_HS',
+'Grade_Uni',
+'CumLaude',
+'N_jobs',
+'Prob_knj',
+'Min_salary_acc',
+'Age',
+'Head_Fam',
+'Num_Y_fam',
+'Wealth',
+'Sex_girl',
+'Foreigner',
+'Not_Citizen',
+'Educ_SC',
+'Educ_PS',
+'Educ_Bach',
+'Educ_ProfDip',
+'Educ_Mas',
+'Educ_HS',
+'Educ_PostDeg',
+'Prof_health',
+'Prof_other',
+'Prof_engin',
+'Prof_arch',
+'Prof_sci',
+'Prof_hum',
+'Prof_law',
+'Prof_econ',
+'Prof_pol_sc',
+'Type_HS_mast',
+'Type_HS_PI',
+'Type_HS_CSL',
+'Type_HS_other',
+'Type_HS_art',
+'Employed_historical',
+'No_contr_Pensions',
+'Unemployed_present',
+'Remote_work',
+'Qual_Retired',
+'Qual_employee',
+'Qual_worker',
+'Qual_entrepeneaur',
+'Qual_aut',
+'Qual_man_dir',
+'Sector_other',
+'Sector_ind',
+'Sector_public',
+'No_Y',
+'Y_20_50',
+'Y_5_20',
+'Y_200_m',
+'Y_50_200')
+```
+
+
+## Bayesian model selection & model averaging 
+
+```{r}
+# Fit a Bayesian regression model using model selection and the Zellner prior for the coefficients
+# and the beta binomial prior for the model prior
+bayesreg <- modelSelection(y=y, x=X, priorCoef=zellnerprior(taustd=1), priorDelta=modelbbprior(1,1), optimMethod = "gibbs")
+
+# Calculate the posterior probabilities for each model in the model selection process
+ppm <- postProb(bayesreg)
+table_1 <- xtable(ppm[1,c(1,2)])
+print(table_1,type="latex")
+table_1
+```
+
+
+
+```{r }
+# Get the number of rows in the coefficient matrix
+ncoef <- nrow(coef(bayesreg))
+
+# Select all rows except the first (intercept) and last (model error variance) from the coefficient matrix
+results_bma <- coef(bayesreg)[-ncoef,]
+
+# Convert the coefficient matrix to a data frame
+results_bma_df <- data.frame(results_bma)
+results_bma_df
+```
+
+```{r }
+# Define beta as a vector of coefficients from the model, excluding the intercept and model error variance
+beta <- coef(bayesreg)[-c(1,nrow(coef(bayesreg))),1]
+beta_df <- data.frame(beta)
+
+# Select all rows except the first (intercept) and last (model error variance) from the coefficient matrix
+# and round the first 3 columns (lower and upper bounds of the 95% confidence interval and point estimate) to 3 decimal places
+# and the fourth column (posterior probability) to 4 decimal places
+pi.bayesreg <- coef(bayesreg)[-c(1,nrow(coef(bayesreg))),]
+pi.bayesreg[,1:3]= round(pi.bayesreg[,1:3], 3)  
+pi.bayesreg[,4]= round(pi.bayesreg[,4], 4) 
+pi.bayesreg_df <- data.frame(pi.bayesreg)
+
+# Out pit point estimates beta and point estimates with pi & marginal probabilites
+beta_df
+pi.bayesreg_df
+```
+
+```{r }
+# Select rows from the coefficient matrix where the posterior probability is greater than 0.5
+sel.bayesreg <- pi.bayesreg[pi.bayesreg[,4] > 0.5,]
+
+# Convert the selected rows to a data frame
+sel.bayesreg_df <- data.frame(sel.bayesreg)
+
+# Select rows from the coefficient matrix where the posterior probability is less than 0.5
+sel.bayesreg_al <- pi.bayesreg[pi.bayesreg[,4] < 0.5,]
+
+# Convert the selected rows to a data frame
+sel.bayesreg_df_al <- data.frame(sel.bayesreg_al)
+
+
+sel.bayesreg_df
+sel.bayesreg_df_al
+```
+```{r }
+rownames(pi.bayesreg) <- names
+# Select rows from the coefficient matrix where the posterior probability is greater than 0.5
+sel.bayesreg <- pi.bayesreg[pi.bayesreg[,4] > 0.5,]
+
+# Convert the selected rows to a data frame
+sel.bayesreg_df <- data.frame(sel.bayesreg)
+
+# Use the xtable function to create a table from the data frame
+sel.bayesreg_table <- xtable(sel.bayesreg_df)
+
+
+# Select rows from the coefficient matrix where the posterior probability is less than 0.5
+sel.bayesreg_al <- pi.bayesreg[pi.bayesreg[,4] < 0.5,]
+
+# Convert the selected rows to a data frame
+sel.bayesreg_df_al <- data.frame(sel.bayesreg_al)
+
+# Use the xtable function to create a table from the data frame
+sel.bayesreg_table_al <- xtable(sel.bayesreg_df_al)
+
+# Output the table in LaTeX format
+print(sel.bayesreg_table, type = "latex")
+
+
+```
+
+
+```{r }
+# Select rows from the data frame where the lower and upper bounds of the 95% posterior interval both fall outside of 0
+coef_no_0_pi1 <- pi.bayesreg_df[pi.bayesreg_df[,2] > 0.000 & pi.bayesreg_df[,3] > 0.000,c(1,4)]
+coef_no_0_pi2 <- pi.bayesreg_df[pi.bayesreg_df[,2] < 0.000 & pi.bayesreg_df[,3] < 0.000,c(1,4)]
+coef_no_0_pi <- data.frame(rbind(coef_no_0_pi1,coef_no_0_pi2))
+coef_no_0_pi
+
+library(xtable)
+table_3 <- xtable(coef_no_0_pi)
+print(table_3,type="latex")
+
+```
+
+```{r }
+# Get the number of rows in the coefficient matrix
+p <- nrow(pi.bayesreg)
+
+# Create an empty plot with the x-axis ranging from 1 to p and the y-axis scaled to show the range of the
+# lower and upper bounds of the 95% confidence interval plus 25%
+plot(NA, ylim=1.25*range(pi.bayesreg[,1:3]), xlim=c(0,nrow(pi.bayesreg)), ylab='95% PI', xlab='Coefficients', main='Bayesian Model Selection')
+
+# Create a vector of colors based on whether the point estimate for each coefficient is outside of the confidence interval
+cols= ifelse(beta < pi.bayesreg[ , 1] | beta > pi.bayesreg[, 2], 2, 1)
+
+# Add horizontal lines to the plot showing the lower and upper bounds of the confidence interval for each coefficient
+segments(y0 = pi.bayesreg[, 2], y1 = pi.bayesreg[, 3], x0 = 1:nrow(pi.bayesreg), col = cols)
+
+# Add points to the plot showing the point estimates for each coefficient
+points(1:p,  coef(bayesreg)[-c(1,nrow(coef(bayesreg))),1], pch = 16,cex=0.5)
+
+# Set the plot dimensions in inches
+plot.width <- 8
+plot.height <- 6
+
+# Set the plot resolution in pixels per inch
+plot.res <- 300
+
+# Save the plot to a png file on the Desktop
+png("/Users/Ramon/Documents/Estudio/BSE/Term_1/Statistical_Modelling_Inference/SIM_Project/Repositoryp/plot.png", width=plot.width, height=plot.height, units="in", res=plot.res)
+print(plot)
+dev.off()
+
+```
+
+```{r }
+# Set the plot dimensions in inches
+plot.width <- 8
+plot.height <- 6
+
+# Set the plot resolution in pixels per inch
+plot.res <- 300
+
+# Save the plot to a png file on the Desktop
+png("../plot.png", width=plot.width, height=plot.height, units="in", res=plot.res)
+
+# Get the number of rows in the coefficient matrix
+p <- nrow(pi.bayesreg)
+
+# Create an empty plot with the x-axis ranging from 1 to p and the y-axis scaled to show the range of the
+# lower and upper bounds of the 95% confidence interval plus 25%
+plot(NA, ylim=1.25*range(pi.bayesreg[,1:3]), xlim=c(0,nrow(pi.bayesreg)), ylab='95% PI', xlab='Coefficients', main='Bayesian Model Selection')
+
+# Create a vector of colors based on whether the point estimate for each coefficient is outside of the confidence interval
+cols= ifelse(beta < pi.bayesreg[ , 1] | beta > pi.bayesreg[, 2], 2, 1)
+
+# Add horizontal lines to the plot showing the lower and upper bounds of the confidence interval for each coefficient
+segments(y0 = pi.bayesreg[, 2], y1 = pi.bayesreg[, 3], x0 = 1:nrow(pi.bayesreg), col = cols)
+
+# Add points to the plot showing the point estimates for each coefficient
+points(1:p,  coef(bayesreg)[-c(1,nrow(coef(bayesreg))),1], pch = 16,cex=0.5)
+
+dev.off()
+
+```
+
+
+```{r }
+# Get the number of rows in the coefficient matrix
+p <- nrow(pi.bayesreg)
+
+# Create an empty plot with the x-axis ranging from 1 to p and the y-axis scaled to show the range of the
+# lower and upper bounds of the 95% confidence interval plus 25%
+plot(NA, ylim=1.25*range(pi.bayesreg[,1:3]), xlim=c(0,nrow(pi.bayesreg)), ylab='95% PI', xlab='Coefficients', main='Bayesian Model Selection')
+
+# Add horizontal lines to the plot showing the lower and upper bounds of the confidence interval for each coefficient
+# Use different colors for the lines depending on whether the point estimate is outside of the confidence interval
+segments(y0 = pi.bayesreg[, 2], y1 = pi.bayesreg[, 3], x0 = 1:nrow(pi.bayesreg), col = ifelse(beta < pi.bayesreg[ , 1] | beta > pi.bayesreg[, 2], "red", "blue"))
+
+# Add points to the plot showing the point estimates for each coefficient
+points(1:p,  coef(bayesreg)[-c(1,nrow(coef(bayesreg))),1], pch = 16,cex=0.5, col="black")
+
+# Add vertical lines to the plot showing the location of the point estimates
+abline(v=1:p, col="gray", lty=2)
+
+# Add a legend to the plot
+legend("topleft", legend=c("95% PI", "Point estimate"), col=c("red", "black"), pch=16)
+
+```
+
+```{r }
+# Calculate the number of variables in each model in the model selection process
+nvars <- rowSums(bayesreg$postSample)
+
+# Set the margins and font sizes for the plot
+par(mar=c(4,5,.1,.1), cex.lab=1.3, cex.axis=1.3)
+
+# Create a line plot showing the number of variables at each iteration of the Gibbs sampling process
+plot(nvars, type='l', xlab='Gibbs iteration', ylab='Model size', col="black", lwd=2)
+
+# Add a title to the plot
+title("Model size over Gibbs iterations")
+```
+
+```{r }
+
+# Calculate the cumulative sum of the posterior sample for each variable
+margppest <- matrix(NA, nrow=nrow(bayesreg$postSample), ncol=ncol(bayesreg$postSample))
+for (j in 1:ncol(bayesreg$postSample)) {
+  margppest[,j] <- cumsum(bayesreg$postSample[,j])/(1:nrow(bayesreg$postSample))
+}
+
+# Create a vector of colors for the plot based on the values of the coefficients
+col <- rep('black', length(beta))
+col[beta %in% range(-2/3,2/3)] <- 'blue'
+col[beta >0.99] <- 'red'
+
+# Set the margins and font sizes for the plot
+par(mar=c(4,5,.1,.1), cex.lab=1, cex.axis=1)
+
+# Create a line plot showing the posterior marginal inclusion probabilities for each variable
+plot(margppest[,1], type='l', ylim=c(0,1), col=col, xlab='Gibbs iteration', ylab='Estimated Marginal Posterior Probability)')
+for (j in 2:ncol(margppest)) lines(margppest[,j], col=col[j])
+
+# Set plot parameters
+par(mar=c(4,5,1,1), cex.lab=1, cex.axis=1)
+
+# Plot the values
+plot(coef(bayesreg)[-c(1,nrow(coef(bayesreg))),'margpp'], col=col, xlab='Variable index', ylab='Posterior marginal inclusion probability')
+
+```
+
+
+```{r }
+# Calculate posterior probabilities for each model
+ppm <- postProb(bayesreg)
+
+
+# Extract the first element of the results_bma data frame and convert it to a vector
+b2 <- as.vector(results_bma_df[,1])
+b3 <- b2[-1]
+
+# Calculate the predicted values using the X_test data, b3 vector, and the first element of the b2 vector
+pred <-as.matrix(X_test) %*% as.matrix(b3) + b2[1]
+
+# Convert the predicted values to a data frame
+pred_df <- data.frame(pred)
+
+# Load the Metrics and MLmetrics packages
+library(Metrics)
+library(MLmetrics)
+
+# Calculate the root mean squared error (RMSE) between the predicted values and the actual values in Y_test
+rmse <- rmse(Y_test, pred)
+
+# Print the RMSE value
+rmse
+
+# Calculate the squared residuals and squared total
+squared_residuals <- (Y_test - pred)^2
+squared_total <- (Y_test - mean(Y_test))^2
+
+# Calculate the sum of squared residuals and squared total
+sum_squared_residuals <- sum(squared_residuals)
+sum_squared_total <- sum(squared_total)
+
+# Calculate the R-squared value
+r2 <- 1 - (sum_squared_residuals / sum_squared_total)
+
+# Print the R^2
+r2
+
+```
+
+## Bayesian Quantile Regresion:  Adaptive Lasso
+
+
+
+```{r }
+library(bayesQR)
+library(ggplot2)
+
+# First, we create a prior object using the prior() function from the bayesQR package.
+prior <- prior(y~., data=data_train, beta0=as.vector(rep(0,54)), V0=as.matrix(diag(54)),shape0=0.01)
+# Next, we use the str() function to print the structure of the prior object.
+str(prior)
+
+# We then define a vector of probabilities (p) for which we want to compute quantiles.
+p <- c(0.05,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.95,0.99)
+
+X_scale <- scale(x)
+data_train_scale <- data.frame(cbind(y,X_scale))
+data_train_scale[,2] <- rep(1,7403)
+
+# Next, we use the bayesQR() function to fit a quantile regression model using the specified formula, data, quantiles, and other arguments.
+bayesq <- bayesQR(formula = y ~ ., data = data_train_scale, quantile = p, ndraw = 10000, 
+                           normal.approx = FALSE,alasso = TRUE)
+
+
+# Finally, we use the summary() function from the bayesQR package to summarize the fit of the quantile regression model.
+results <- summary(bayesq, burnin = 500, credint = c(0.05, 0.95))
+results
+
+```
+
+
+
+
+
+```{r }
+
+# We use the summary() function to compute a summary for the 0.1 quantile, storing the result in a data frame.
+# We specify the burnin and credint arguments as before.
+# We also specify the quantile argument to specify the quantile for which to compute the summary.
+
+results_01 <- summary(bayesq, burnin = 5, credint =  c(0.05, 0.95),quantile=0.1)
+
+# We then extract the 'betadraw' element from the summary object, and store it in a new data frame.
+# We also rename the columns of the data frame to more descriptive names.
+
+results_01 <- data.frame(results_01[[1]]['betadraw'])
+names(results_01) <- c('Estimate','Lower[.10]','Upper[0.90]')
+results_01 <- results_01[-c(1,2),]
+rownames(results_01) <- names
+
+# We repeat this process for the 0.5, 0.9, and 0.99 quantiles.
+
+results_05 <- summary(bayesq, burnin = 500, credint =  c(0.05, 0.95),quantile=0.5)
+results_05 <- data.frame(results_05[[1]]['betadraw'])
+names(results_05) <- c('Estimate','Lower[.10]','Upper[0.90]')
+results_05 <- results_05[-c(1,2),]
+rownames(results_05) <- names
+
+results_09 <- summary(bayesq, burnin = 500, credint =  c(0.05, 0.95),quantile=0.9)
+results_09 <- data.frame(results_09[[1]]['betadraw'])
+names(results_09) <- c('Estimate','Lower[.10]','Upper[0.90]')
+results_09 <- results_09[-c(1,2),]
+rownames(results_09) <- names
+
+results_99 <- summary(bayesq, burnin = 500, credint =  c(0.05, 0.95),quantile=0.99)
+results_99 <- data.frame(results_99[[1]]['betadraw'])
+names(results_99) <- c('Estimate','Lower[.10]','Upper[0.90]')
+results_99 <- results_99[-c(1,2),]
+rownames(results_99) <- names
+
+
+# Finally, we create a new data frame with the estimates for each quantile in separate columns.
+# We also rename the columns of the data frame to more descriptive names.
+results_df <- data.frame(cbind(results_01[,1],results_05[,1],results_09[,1],results_99[,1]))
+names(results_df) <- c('Est_0.1','Est_0.5','Est_0.9','Est_0.99')
+rownames(results_df) <- names
+
+
+# Dataframe with the variable of those qunatiles that contrast the most
+library(xtable)
+df4 <- results_df[c(12,42),]
+rownames(df4) <- c('Wealth','Qual_employee')
+table_4 <- xtable(df4)
+print(table_4,type="latex")
+
+
+
+```
+
+```{r }
+dropped_01 <- rownames(results_01[results_01[,2] < 0 & results_01[,3]>0,])
+dropped_05 <- rownames(results_05[results_01[,2] < 0 & results_05[,3]>0,])
+dropped_09 <- rownames(results_09[results_01[,2] < 0 & results_09[,3]>0,])
+dropped_99 <- rownames(results_99[results_01[,2] < 0 & results_99[,3]>0,])
+
+var_sel_drop1 <- data.frame(t(dropped_01))
+var_sel_drop5 <- data.frame(t(dropped_05))
+var_sel_drop9 <- data.frame(t(dropped_09))
+var_sel_drop99 <- data.frame(t(dropped_99))
+
+dropped_01
+dropped_05
+dropped_09
+dropped_99
+```
+
+```{r }
+# In this code, we are using the plot() function from the bayesQR package to create trace plots for the fit of the quantile regression model for different quantiles.
+
+# First, we use the par() function to specify that we want to create a 2x2 grid of plots.
+par(mfrow=c(2,2))
+
+# We then use the plot() function to create a trace plot for the 0.1 quantile, with var = n specifying which variable to plot.
+plot(bayesq, plottype = "trace",var = 2,quantile = 0.1,ylim = range(y))
+plot(bayesq, plottype = "trace",var = 2,quantile = 0.5,ylim = range(y))
+plot(bayesq, plottype = "trace",var = 2,quantile = 0.9,ylim = range(y))
+plot(bayesq, plottype = "trace",var = 2,quantile = 0.99,ylim = range(y))
+
+```
+
+```{r }
+# In this code, we are using the plot() function from the bayesQR package to create histogram plots for the fit of the quantile regression model for different quantiles.
+
+# First, we use the par() function to specify that we want to create a 2x2 grid of plots.
+par(mfrow=c(2,2))
+
+# We then use the plot() function to create a histogram plot for the 0.1 quantile, with var = 5 specifying which variable to plot.
+plot(bayesq, plottype = "hist",var = 5,quantile = 0.1, burnin = 500,ylim = range(y))
+plot(bayesq, plottype = "hist",var = 5,quantile = 0.5, burnin = 500,ylim = range(y))
+plot(bayesq, plottype = "hist",var = 5,quantile = 0.9, burnin = 500,ylim = range(y))
+plot(bayesq, plottype = "hist",var = 5,quantile = 0.99, burnin = 500,ylim = range(y))
+
+```
+
+```{r }
+# In this code, we are using the plot() function from the bayesQR package to create quantile plots for the fit of the quantile regression model for different variables.
+
+# First, we use the par() function to specify that we want to create a 3x3 grid of plots.
+png("plot3.png")
+par(mfrow=c(1,2))
+
+# We then use the plot() function to create a quantile plot for the nth variable, using the specified probabilities (p).
+# The abline() function is used to add a horizontal line at y = 0 to the plot.
+plot(bayesq, var = 12,quantile = p,plottype = "quantile",ylab = 'Wealth')
+abline(h = 0, lty = 1)
+title("Quantile Plot Wealth")
+plot(bayesq, var = 43,quantile = p,plottype = "quantile",ylab='Status Employee')
+abline(h = 0, lty = 1)
+title("Quantile Plot Employee")
+dev.off()
+# plot(bayesq, var = 4,quantile = p,plottype = "quantile")
+# abline(h = 0, lty = 1)
+# plot(bayesq, var = 5,quantile = p,plottype = "quantile")
+# abline(h = 0, lty = 1)
+# plot(bayesq, var = 6,quantile = p,plottype = "quantile")
+# abline(h = 0, lty = 1)
+# plot(bayesq, var = 7,quantile = p,plottype = "quantile")
+# abline(h = 0, lty = 1)
+
+```
+
+

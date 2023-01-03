@@ -1,0 +1,591 @@
+---
+title: "Assignment"
+author: "Alessandro Tenderini and Ramon Talvi"
+date: '2022-11-24'
+output: html_document
+---
+
+```{r}
+PATH = getwd()
+library(bayestestR)
+library(rstanarm)
+library(ggplot2)
+library(tidyverse)
+library(mombf)
+library(hdm)
+library(glmnet)
+library(HDCI)
+library(gridExtra)
+library(mvtnorm)
+library(boot)
+library(quantreg)
+library(SparseM)
+```
+
+```{r}
+set.seed(2)
+
+
+PATH="/Users/utente/desktop/fam/famiglie/Data"
+
+#eliminate some rows
+italy <- read_csv(file.path(PATH, "italy_income_final.csv"), col_names = T)
+italy_final=italy[italy$ETA>15,]
+italy_final$W[italy_final$W == 0]=0.1
+italy_final=italy_final[italy_final$W>0,]
+italy_final=italy_final[italy_final$Y>0,]
+
+#rename Y as income
+data <- italy_final
+names=names(data)
+names[1]="income"
+names(data)=names
+
+#log of income and wealth
+data$income=log(data$income)
+data$W=log(data$W)
+
+
+names(data) <- c('income','Grade_HS',
+'Grade_Uni',
+'CumLaude',
+'N_jobs',
+'Prob_knj',
+'Min_salary_acc',
+'Age',
+'Head_Fam',
+'Num_Y_fam',
+'Wealth',
+'Sex_girl',
+'Foreigner',
+'Not_Citizen',
+'Educ_SC',
+'Educ_PS',
+'Educ_Bach',
+'Educ_ProfDip',
+'Educ_Mas',
+'Educ_HS',
+'Educ_PostDeg',
+'Prof_health',
+'Prof_other',
+'Prof_engin',
+'Prof_arch',
+'Prof_sci',
+'Prof_hum',
+'Prof_law',
+'Prof_econ',
+'Prof_pol_sc',
+'Type_HS_mast',
+'Type_HS_PI',
+'Type_HS_CSL',
+'Type_HS_other',
+'Type_HS_art',
+'Employed_historical',
+'No_contr_Pensions',
+'Unemployed_present',
+'Remote_work',
+'Qual_Retired',
+'Qual_employee',
+'Qual_worker',
+'Qual_entrepeneaur',
+'Qual_aut',
+'Qual_man_dir',
+'Sector_other',
+'Sector_ind',
+'Sector_public',
+'No_Y',
+'Y_20_50',
+'Y_5_20',
+'Y_200_m',
+'Y_50_200')
+
+
+#train and test split
+train_index=sample(1:nrow(data), nrow(data)*0.7, replace = FALSE)
+data_train=data[train_index,]
+data_test=data[-train_index,]
+
+#X and Y (train)
+Y=data_train$income
+X=data_train[,-1]
+
+#X_test and Y_test
+Y_test=data_test$income
+X_test=data_test[,-1]
+
+#linear regression
+lr=lm(income~.,data = data_train)
+
+#this if you need 
+x = model.matrix(income~., data=data_train)
+y = data_train$income
+
+x_test = model.matrix(income~., data=data_test)
+y_test = data_test$income
+```
+
+Function to find optimal lambda
+
+```{r}
+lasso.bic <- function(y,x,extended=FALSE) {
+  #Select model in LASSO path with best BIC (using LASSO regression estimates)
+  #Input
+  # - y: vector with response variable
+  # - x: design matrix
+  #
+  #Output: list with the following elements
+  # - coef: LASSO-estimated regression coefficient with lambda set via BIC
+  # - ypred: predicted y
+  # - lambda.opt: optimal value of lambda
+  # - lambda: data.frame with bic and number of selected variables for each value of lambda
+  require(glmnet)
+  fit <- glmnet(x=x,y=y,family='gaussian',alpha=1)
+  pred <- cbind(1,x) %*% rbind(fit$a0,fit$beta)
+  n <- length(y)
+  p <- colSums(fit$beta!=0) + 1
+  if (!extended){
+    bic <- n * log(colSums((y-pred)^2)/length(y)) + n*(log(2*pi)+1) + log(n)*p 
+  } else {
+    bic <- n * log(colSums((y-pred)^2)/length(y)) + n*(log(2*pi)+1) + log(n)*p + 2*log(choose(ncol(x),p))
+  }
+  sel <- which.min(bic)
+  beta <- c(fit$a0[sel],fit$beta[,sel]); names(beta)[1]= 'Intercept'
+  ypred <- pred[,sel]
+  ans <- list(bic=min(bic),coef=beta,ypred=ypred,lambda.opt=fit$lambda[sel],lambda=data.frame(lambda=fit$lambda,bic=bic,nvars=p))
+  return(ans)
+}
+```
+
+## Lasso regression with optimal lambda
+
+
+```{r}
+#Opt lambda
+lambda.opt=lasso.bic(y,x[,-1])$lambda.opt 
+lambda.opt
+
+#LASSO reg
+model_LASSO=glmnet(x=X,y=Y,family='gaussian',alpha=1, lambda = lambda.opt)
+#coefficients
+coef(model_LASSO)
+#number of zero coefficients
+sum(coef(model_LASSO)==0)
+```
+
+```{r}
+names(X)[as.vector(coef(model_LASSO)!=0)[-1]]
+coef(model_LASSO)[as.vector(coef(model_LASSO)!=0)][-1]
+```
+
+
+## Prediction and RMSE
+
+```{r}
+#Prediction and RMSE
+pred_lasso=cbind(x_test) %*% rbind(model_LASSO$a0,model_LASSO$beta)
+pred_lr=predict(lr, newdata=X_test)
+RMSE_LASSO=sqrt(mean((y_test - as.vector(pred_lasso))**2))
+RMSE_lr=sqrt(mean((y_test - as.vector(pred_lr))**2))
+
+RMSE_LASSO
+RMSE_lr
+```
+
+### I also fit a LASSO regression with optimal lambda according to cross validated MSE 
+
+```{r}
+lambda.CV=cv.glmnet(x=x[,-1], y=y, nfolds=30, type.measure="mse")$lambda.min
+lambda.CV
+
+#LASSO.CV reg
+model_LASSO.CV=glmnet(x=X,y=Y,family='gaussian',alpha=1, lambda = lambda.CV)
+
+#number of zero coefficients
+sum(coef(model_LASSO.CV)==0)
+
+pred_lasso.CV=cbind(x_test) %*% rbind(model_LASSO.CV$a0,model_LASSO.CV$beta)
+RMSE_LASSO.CV=sqrt(mean((y_test - as.vector(pred_lasso.CV))**2))
+
+RMSE_LASSO.CV
+```
+
+
+##Adaptive Lasso
+
+```{r}
+ADA.lasso.bic <- function(y,x,penalty.factor,extended=FALSE) {
+  #Select model in LASSO path with best BIC (using LASSO regression estimates)
+  #Input
+  # - y: vector with response variable
+  # - x: design matrix
+  #
+  #Output: list with the following elements
+  # - coef: LASSO-estimated regression coefficient with lambda set via BIC
+  # - ypred: predicted y
+  # - lambda.opt: optimal value of lambda
+  # - lambda: data.frame with bic and number of selected variables for each value of lambda
+  require(glmnet)
+  fit <- glmnet(x=x,y=y,family='gaussian',alpha=1, penalty.factor = penalty.factor)
+  pred <- cbind(1,x) %*% rbind(fit$a0,fit$beta)
+  n <- length(y)
+  p <- colSums(fit$beta!=0) + 1
+  if (!extended){
+    bic <- n * log(colSums((y-pred)^2)/length(y)) + n*(log(2*pi)+1) + log(n)*p 
+  } else {
+    bic <- n * log(colSums((y-pred)^2)/length(y)) + n*(log(2*pi)+1) + log(n)*p + 2*log(choose(ncol(x),p))
+  }
+  sel <- which.min(bic)
+  beta <- c(fit$a0[sel],fit$beta[,sel]); names(beta)[1]= 'Intercept'
+  ypred <- pred[,sel]
+  ans <- list(bic=min(bic),coef=beta,ypred=ypred,lambda.opt=fit$lambda[sel],lambda=data.frame(lambda=fit$lambda,bic=bic,nvars=p))
+  return(ans)
+}
+```
+
+```{r}
+tau=1
+cv.ridge <- cv.glmnet(x=x[,-1], y=y, alpha=0)
+coef=coef(cv.ridge, s=cv.ridge$lambda.min)[-1]
+penalty.factor <- 1/abs(coef)^tau
+penalty.factor[penalty.factor == Inf] <- 999999999 
+
+lambda.opt.ADA=ADA.lasso.bic(y,x[,-1],penalty.factor)$lambda.opt 
+lambda.opt.ADA
+
+model_LASSO.ADA=glmnet(X,Y,penalty.factor=penalty.factor, lambda = lambda.opt.ADA)
+
+coef(model_LASSO.ADA)
+sum(coef(model_LASSO.ADA)==0)
+
+#Adaptive lasso with lambda according to cv
+```
+
+## Prediction of adaptive LASSO
+
+```{r}
+#Prediction and RMSE
+pred_lasso.ADA=cbind(x_test) %*% rbind(model_LASSO.ADA$a0,model_LASSO.ADA$beta)
+RMSE_LASSO.ADA=sqrt(mean((y_test - as.vector(pred_lasso.ADA))**2))
+
+
+RMSE_LASSO.ADA
+```
+
+### I also fit a LASSO regression with optimal lambda according to cross validated MSE 
+
+```{r}
+lambda.CV.ADA=cv.glmnet(x=x[,-1], y=y,penalty.factor=penalty.factor, nfolds=30, type.measure="mse")$lambda.min
+lambda.CV.ADA
+
+#LASSO.CV reg
+model_LASSO.CV.ADA=glmnet(x=X,y=Y,family='gaussian',alpha=1,penalty.factor=penalty.factor, lambda = lambda.CV.ADA)
+
+#number of zero coefficients
+sum(coef(model_LASSO.CV.ADA)==0)
+
+pred_lasso.CV.ADA=cbind(x_test) %*% rbind(model_LASSO.CV.ADA$a0,model_LASSO.CV.ADA$beta)
+RMSE_LASSO.CV.ADA=sqrt(mean((y_test - as.vector(pred_lasso.CV))**2))
+
+RMSE_LASSO.CV.ADA
+```
+
+## SUMMARY OF MODELS
+
+```{r}
+#model_LASSO
+#model_LASSO.CV
+#model_LASSO.ADA
+#model_LASSO.CV.ADA
+#lr
+print("model_LASSO")
+sum(coef(model_LASSO)==0)
+model_LASSO$dev.ratio
+RMSE_LASSO
+cat("\n")
+
+print("model_LASSO.CV")
+sum(coef(model_LASSO.CV)==0)
+model_LASSO.CV$dev.ratio
+RMSE_LASSO.CV
+cat("\n")
+
+print("model_LASSO.ADA")
+sum(coef(model_LASSO.ADA)==0)
+model_LASSO.ADA$dev.ratio
+RMSE_LASSO.ADA
+cat("\n")
+
+print("model_LASSO.CV.ADA")
+sum(coef(model_LASSO.CV.ADA)==0)
+model_LASSO.CV.ADA$dev.ratio
+RMSE_LASSO.CV.ADA
+cat("\n")
+
+print("model_lr")
+summary(lr)$r.squared
+RMSE_lr
+```
+
+## Table with estimates of LASSO, ADA LASSO and OLS
+
+```{r}
+options(digits = 4)
+
+coef1 <- round(as.vector(coef(model_LASSO))[-1], 4)
+coef3 <- round(as.vector(coef(model_LASSO.ADA))[-1], 4)
+coef5 <- round(as.vector(coef(lr))[-1], 4)
+diff1=abs(coef5)-abs(coef1)
+diff1=round(diff1, 4)
+diff2=abs(coef3)-abs(coef1)
+diff2=round(diff2, 4)
+
+
+model_coefs <- list(coef1, coef3, coef5,diff1,diff2)
+df <- data.frame(model_coefs)
+df <- data.frame(model_coefs, row.names = names(X))
+colnames(df) <- c("LASSO","ADA LASSO", "OLS","OLS - LASSO","ADA LASSO - LASSO")
+df
+```
+
+
+## Plot of estimates of 5 models
+
+```{r}
+
+# Load the data for the coefficients
+coef1 <- as.vector(coef(model_LASSO))[-1]
+coef2 <- as.vector(coef(model_LASSO.CV))[-1]
+coef3 <- as.vector(coef(model_LASSO.ADA))[-1]
+coef4 <- as.vector(coef(model_LASSO.CV.ADA))[-1]
+coef5 <- as.vector(coef(lr))[-1]
+
+
+plot(NA, ylim=(1.1*range(c(coef1,coef2,coef3,coef4,coef5))), xlim=c(0,length(coef1)), ylab='estimates', xlab='variables', main='LASSO')
+points(1:length(coef5), coef5,col = "blue",pch=20, )
+points(1:length(coef1), coef1,col = "red",pch=20)
+points(1:length(coef2), coef2,col = "orange",pch=20)
+points(1:length(coef3), coef3,col = "purple",pch=20)
+points(1:length(coef4), coef4,col = "green",pch=20)
+
+legend(0, 1, legend=c("model_LASSO", "model_LASSO.CV","model_LASSO.ADA","model_LASSO.CV.ADA","lr"),
+       col=c("red", "orange","purple","green","blue"), lty=1:2, cex=0.5)
+
+```
+
+
+## Plot of LASSO and ADA.LASSO ,OLS
+
+```{r}
+
+# Load the data for the coefficients
+coef1 <- as.vector(coef(model_LASSO))[-1]
+coef3 <- as.vector(coef(model_LASSO.ADA))[-1]
+coef5 <- as.vector(coef(lr))[-1]
+
+
+plot(NA, ylim=(1.1*range(c(coef1,coef2,coef3,coef4,coef5))), xlim=c(0,length(coef1)), ylab='estimates', xlab='variables', main='LASSO, ADAPTIVE LASSO, OLS')
+points(1:length(coef1), coef1,col = "red",pch=20)
+points(1:length(coef3), coef3,col = "darkgreen",pch=20)
+points(1:length(coef5), coef5,col = "blue",pch=20)
+
+legend(0, 1, legend=c("model_LASSO","model_LASSO.ADA","OLS"),
+       col=c("red","darkgreen","blue"), lty=1:2, cex=0.5)
+
+```
+
+
+## Plot of LASSO and ADA.LASSO 
+
+```{r}
+
+# Load the data for the coefficients
+coef1 <- as.vector(coef(model_LASSO))[-1]
+coef3 <- as.vector(coef(model_LASSO.ADA))[-1]
+
+
+plot(NA, ylim=(1.1*range(c(coef1,coef2,coef3,coef4,coef5))), xlim=c(0,length(coef1)), ylab='estimates', xlab='variables', main='LASSO, ADAPTIVE LASSO')
+points(1:length(coef1), coef1,col = "red",pch=20)
+points(1:length(coef3), coef3,col = "purple",pch=20)
+
+legend(0, 1, legend=c("model_LASSO","model_LASSO.ADA"),
+       col=c("red","purple"), lty=1:2, cex=0.5)
+
+```
+
+## Plot of ADA.LASSO - LASSO in absolute values
+
+```{r}
+
+# Load the data for the coefficients
+coef1 <- as.vector(coef(model_LASSO))[-1]
+coef3 <- as.vector(coef(model_LASSO.ADA))[-1]
+diff= abs(coef3)-abs(coef1)
+
+
+cols= ifelse(abs(coef3)>0.1, 2, 1)
+
+
+plot(NA, ylim=(1.1*range(diff)), xlim=c(0,length(coef1)), ylab='estimates', xlab='variables', main='ADAPTIVE LASSO- LASSO')
+points(1:length(coef1), diff,col = cols,pch=20)
+#points(1:length(coef1), diff,col = "red",pch=20)
+abline(h = 0)
+
+
+
+```
+
+## Plot of ADA.LASSO and OLS
+
+```{r}
+
+# Load the data for the coefficients
+coef3 <- as.vector(coef(model_LASSO.ADA))[-1]
+coef5 <- as.vector(coef(lr))[-1]
+
+
+plot(NA, ylim=(1.1*range(c(coef1,coef2,coef3,coef4,coef5))), xlim=c(0,length(coef1)), ylab='estimates', xlab='variables', main='ADA.LASSO, OLS')
+points(1:length(coef5), coef5,col = "blue",pch=20, )
+points(1:length(coef3), coef3,col = "green",pch=20)
+
+
+legend(0, 1, legend=c("model_LASSO.ADA","lr"),
+       col=c("green","blue"), lty=1:2, cex=0.5)
+
+```
+
+## Plot of OLS - ADA.LASSO in absolute values
+
+```{r}
+
+# Load the data for the coefficients
+coef5 <- as.vector(coef(lr))[-1]
+coef3 <- as.vector(coef(model_LASSO.ADA))[-1]
+diff= abs(coef5)-abs(coef3)
+
+
+cols= ifelse(abs(coef5)>0.1, 2, 1)
+
+
+plot(NA, ylim=(1.1*range(diff)), xlim=c(0,length(coef1)), ylab='estimates', xlab='variables', main='OLS- ADAPTIVE LASSO')
+points(1:length(coef1), diff,col = cols,pch=20)
+#points(1:length(coef1), diff,col = "red",pch=20)
+abline(h = 0)
+
+
+
+```
+
+## Plot of LASSO and OLS
+
+```{r}
+
+# Load the data for the coefficients
+coef1 <- as.vector(coef(model_LASSO))[-1]
+coef5 <- as.vector(coef(lr))[-1]
+
+
+plot(NA, ylim=(1.1*range(c(coef1,coef2,coef3,coef4,coef5))), xlim=c(0,length(coef1)), ylab='estimates', xlab='variables', main='LASSO, OLS')
+points(1:length(coef5), coef5,col = "blue",pch=20, )
+points(1:length(coef1), coef1,col = "red",pch=20)
+
+
+legend(0, 1, legend=c("model_LASSO","lr"),
+       col=c("red","blue"), lty=1:2, cex=0.5)
+
+```
+
+## Plot of OLS - LASSO in absolute values
+
+```{r}
+
+# Load the data for the coefficients
+coef1 <- as.vector(coef(model_LASSO))[-1]
+coef5 <- as.vector(coef(lr))[-1]
+diff= abs(coef5)-abs(coef1)
+
+cols= ifelse(abs(coef5)>0.1, 2, 1)
+
+plot(NA, ylim=(1.1*range(diff)), xlim=c(0,length(coef1)), ylab='estimates', xlab='variables', main='OLS- LASSO')
+points(1:length(coef1), diff,col = cols,pch=20)
+abline(h = 0)
+
+```
+
+## Quantile regression
+
+```{r}
+#Quantile regression
+
+#if b3=0.06, each unit increase in X3 leads to a 6% increase in Y
+
+#0.1 Q
+lowerQ_model <- rq.fit.lasso(y=y,x=x, tau = 0.1, lambda = lambda.opt)
+lowerQ_coef=lowerQ_model$coefficients
+lowerQ_coef[abs(lowerQ_coef)<0.09]=0
+sum(lowerQ_coef==0)
+
+#0.9 Q
+upperQ_model <- rq.fit.lasso(y=y,x=x, tau = 0.9, lambda = lambda.opt)
+upperQ_coef=upperQ_model$coefficients
+upperQ_coef[abs(upperQ_coef)<0.09]=0
+sum(upperQ_coef==0)
+
+#0.5 Q
+median_model <- rq.fit.lasso(y=y,x=x, tau = 0.5, lambda = lambda.opt)
+median_coef=median_model$coefficients
+median_coef[abs(median_coef)<0.09]=0
+sum(median_coef==0)
+
+#0.99 Q
+topQ_model <- rq.fit.lasso(y=y,x=x, tau = 0.99, lambda = lambda.opt)
+topQ_model_coef=topQ_model$coefficients
+topQ_model_coef[abs(topQ_model_coef)<0.09]=0
+sum(topQ_model_coef==0)
+
+```
+
+## Plot of difference between quantile estimates 
+
+### 0.99 - 0.1
+
+```{r}
+##plot of difference between quantile estimates 
+
+beta=topQ_model_coef-lowerQ_coef 
+beta=beta[-1]
+
+
+d=length(beta)
+plot(beta, ylim=range(beta), ylab="topQ_model_coef - lowerQ_coef", xlab='Variable',col='blue', cex=0.8,pch=20,main='0.99 - 0.1')
+```
+
+### 0.9 - 0.1
+
+```{r}
+##plot of difference between quantile estimates 
+
+beta=upperQ_coef-lowerQ_coef 
+beta=beta[-1]
+
+
+d=length(beta)
+plot(beta, ylim=range(beta), ylab="upperQ_coef - lowerQ_coef", xlab='Variable',col='blue', cex=0.8,pch=20,main='0.9 - 0.1')
+```
+
+### 0.9 - 0.5
+
+```{r}
+##plot of difference between quantile estimates 
+
+beta=upperQ_coef-median_coef 
+beta=beta[-1]
+
+
+d=length(beta)
+plot(beta, ylim=range(beta), ylab="upperQ_coef - median_coef", xlab='Variable',col='blue', cex=0.8,pch=20,main='0.9 - 0.5')
+```
+
+
+
+
+
